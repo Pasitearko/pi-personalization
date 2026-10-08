@@ -1,0 +1,39 @@
+{
+  "name": "@pasitearko/pi-personalization",
+  "version": "0.1.0",
+  "description": "Portable Pi appearance extensions, a theme, and version-guarded ALPS customization patches",
+  "license": "MIT",
+  "type": "module",
+  "repository": { "type": "git", "url": "https://github.com/Pasitearko/pi-personalization.git" },
+  "engines": { "node": ">=22.19.0" },
+  "keywords": ["pi-package", "pi", "tui", "terminal", "personalization"],
+  "files": ["extensions/**/*.ts", "extensions/*/README.md", "extensions/working-timer/assets/completion.wav", "themes", "tools", "patches", "examples", "fonts/build-fonts.py", "fonts/requirements.txt", "fonts/README.md", "fonts/OFL.txt", "docs", "licenses", "README.md", "README.en.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "SECURITY.md"],
+  "pi": {
+    "extensions": [
+      "extensions/conversation-timeline/index.ts",
+      "extensions/jinshanwei-weather/index.ts",
+      "extensions/message-timestamps/index.ts",
+      "extensions/openai-fast/index.ts",
+      "extensions/subscription-usage-row/index.ts",
+      "extensions/working-timer/index.ts",
+      "extensions/frame-click-toggle/index.ts",
+      "extensions/clean-frame-copy/index.ts"
+    ],
+    "themes": ["themes/no-tool-bg.json"]
+  },
+  "scripts": {
+    "test": "node tools/run-tests.mjs",
+    "test:security": "node --test tests/setup.mjs tests/privacy.mjs",
+    "check:privacy": "node tools/privacy-check.mjs",
+    "doctor": "node tools/setup.mjs",
+    "package:check": "npm pack --dry-run --ignore-scripts"
+  },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" },
+  "peerDependenciesMeta": { "@earendil-works/pi-coding-agent": { "optional": true }, "@earendil-works/pi-tui": { "optional": true } },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "alps-pi": "0.3.4",
+    "@specode/pi-subscription-usage": "1.3.1",
+    "jiti": "^2.6.1"
+  }
+}

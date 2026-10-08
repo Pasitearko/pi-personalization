@@ -1,0 +1,872 @@
+/** 功能：Pi 0.84+ bottom-input runtime，仅通过公开 editor/footer/input API 提供输入美化与状态。 */
+
+import * as PiAgent from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	DEFAULT_BOTTOM_INPUT_SHORTCUTS,
+	isStashShortcutInput,
+	matchesConfiguredShortcut,
+	resolveBottomInputShortcuts,
+	type BottomInputShortcuts,
+} from "./shortcuts.ts";
+import {
+	getFastIndicator,
+	getVisibleExtensionStatuses,
+	getUsageTokenTotal,
+	isAssistantUsage,
+	normalizePromptText,
+	readWorkspacePath,
+	renderBottomInputStatus,
+	type AssistantUsage,
+	type BottomInputFrameStatus,
+} from "./status.ts";
+import { createBottomInputEditor } from "./editor.ts";
+import { writeBottomInputDebugLog } from "./debug.ts";
+import { readStoredThroughput, writeStoredThroughput } from "./throughput-store.ts";
+import { getBottomInputIcons } from "./icons.ts";
+import { cloneDefaultInputMetricsSettings, normalizeInputMetricsSettings, type InputMetricsSettings } from "./metrics.ts";
+import { formatPiCapabilityFailures, inspectPiRuntimeCapabilities } from "../../pi-compat.ts";
+// [local patch] Restore Unicode local-file opening without replacing Pi core.
+import { installWindowsLocalFileOpener } from "../../local-file-opener.ts";
+
+export type BottomInputRuntimeStatus = {
+	enabled: boolean;
+	installed: boolean;
+	editorEnabled: boolean;
+	editorInstalled: boolean;
+	footerEnabled: boolean;
+	footerInstalled: boolean;
+	failure?: string;
+};
+
+export type BottomInputRuntimeSettings = {
+	beautifiedInputEnabled?: boolean;
+	footerEnabled?: boolean;
+	inputMetrics?: Partial<InputMetricsSettings>;
+};
+
+export type BottomInputRuntime = {
+	bindSession(ctx: any): void;
+	configure(settings: BottomInputRuntimeSettings): BottomInputRuntimeStatus;
+	dispose(): void;
+	getStatus(): BottomInputRuntimeStatus;
+	setBeautifiedInputEnabled(enabled: boolean): void;
+	resetSessionStartTime(): void;
+	setLastPrompt(prompt: unknown): void;
+	setThinkingLevel(level: unknown): void;
+	setStreaming?(streaming: boolean): void;
+	setLiveUsage(usage: unknown, assistantMessageEvent?: unknown): void;
+	clearLiveUsage(message?: unknown): void;
+	resetThroughput(): void;
+	requestRender(options?: { full?: boolean }): void;
+	stashOrRestoreEditorText(ctx?: any): void;
+	copyEditorText?(ctx?: any): void;
+	cutEditorText?(ctx?: any): void;
+	setShortcuts?(shortcuts: Partial<BottomInputShortcuts> | undefined): void;
+};
+
+type RuntimeUI = {
+	setEditorComponent?: (factory: ((tui: any, theme: any, keybindings: any) => any) | undefined) => void;
+	getEditorComponent?: () => unknown;
+	setFooter?: (factory: ((tui: any, theme: any, footerData: any) => any) | undefined) => void;
+	setStatus?: (key: string, value: string | undefined) => void;
+	getEditorText?: () => string;
+	setEditorText?: (text: string) => void;
+	notify?: (message: string, level: "info" | "warning" | "error") => void;
+	theme?: any;
+	onTerminalInput?: (handler: (data: string) => { consume?: boolean } | undefined) => (() => void) | void;
+};
+
+type RuntimeUIReadResult = { stale: false; ui?: RuntimeUI } | { stale: true };
+
+type BottomInputRuntimeOptions = {
+	/** @deprecated 耗时随真实 UI 事件刷新；不再启动会重绘完整历史的独立时钟。 */
+	startClock?: boolean;
+	now?: () => number;
+	shortcuts?: Partial<BottomInputShortcuts>;
+	copyToClipboard?: (text: string) => Promise<void> | void;
+};
+
+type StatusLayout = {
+	topLines: string[];
+	secondaryLines: string[];
+	lastPromptLines: string[];
+	frameStatus: BottomInputFrameStatus;
+};
+
+const FALLBACK_EDITOR_THEME = {
+	borderColor: (text: string) => text,
+	selectList: {},
+};
+const STASH_STATUS_KEY = "alps-pi-stash";
+const STATUS_RENDER_DEBOUNCE_MS = 33;
+const LAYOUT_CACHE_TTL_MS = 250;
+const STREAMING_LAYOUT_CACHE_TTL_MS = 1_000;
+const MIN_THROUGHPUT_DURATION_MS = 250;
+
+export function createBottomInputRuntime(options: BottomInputRuntimeOptions = {}): BottomInputRuntime {
+	return new BottomInputRuntimeImpl(options);
+}
+
+class BottomInputRuntimeImpl implements BottomInputRuntime {
+	private readonly now: () => number;
+	private readonly copyToClipboardImpl: (text: string) => Promise<void> | void;
+	private ctx: any;
+	private ui: RuntimeUI | undefined;
+	private generation = 0;
+	private beautifiedInputEnabled = true;
+	private footerEnabled = true;
+	private inputMetrics = cloneDefaultInputMetricsSettings();
+	private editorInstalled = false;
+	private footerInstalled = false;
+	private failure: string | undefined;
+	private editorInstance: any;
+	private editorFactory: ((tui: any, theme: any, keybindings: any) => any) | undefined;
+	private footerFactory: ((tui: any, theme: any, footerData: any) => any) | undefined;
+	private footerComponent: any;
+	private footerData: any;
+	private theme: any;
+	private editorTheme: any;
+	private tui: any;
+	private removeInputListener: (() => void) | null = null;
+	private renderTimer: ReturnType<typeof setTimeout> | null = null;
+	private renderPendingFull = false;
+	private editorOwnerGeneration: number | null = null;
+	private footerOwnerGeneration: number | null = null;
+	private cachedLayout: { width: number; expiresAt: number; extensionStatusKey: string; result: StatusLayout } | null = null;
+	private stashedEditorText: string | null = null;
+	private liveUsage: AssistantUsage | null = null;
+	private latestAssistantUsage: AssistantUsage | null = null;
+	private isStreaming = false;
+	private outputStartedAt: number | null = null;
+	private tokensPerSecond: number | null = null;
+	private lastPersistedThroughput: number | null = null;
+	private currentThinkingLevel: string | null = null;
+	private lastPrompt = "";
+	private sessionStartTime: number;
+	private shortcuts: BottomInputShortcuts;
+	private lastTuiFailure: string | undefined;
+
+	constructor(options: BottomInputRuntimeOptions) {
+		this.now = options.now ?? (() => Date.now());
+		this.copyToClipboardImpl = options.copyToClipboard
+			?? ((PiAgent as { copyToClipboard?: (text: string) => Promise<void> | void }).copyToClipboard ?? (() => undefined));
+		this.sessionStartTime = this.now();
+		this.shortcuts = resolveBottomInputShortcuts(options.shortcuts);
+	}
+
+	bindSession(ctx: any): void {
+		const next = readRuntimeUI(ctx);
+		if (next.stale || !next.ui) {
+			this.debug("bind_session", ctx, { note: next.stale ? "ignored_stale_ctx" : "ignored_no_ui_ctx" });
+			return;
+		}
+		const previousCtx = this.ctx;
+		const previousUi = this.ui;
+		const sameUiSession = Boolean(previousUi && previousUi === next.ui);
+		this.debug("bind_session", ctx, {
+			nextUi: next.ui,
+			note: previousCtx && previousCtx !== ctx && !sameUiSession && (this.editorInstalled || this.footerInstalled) ? "switching_ui_session" : undefined,
+			details: { sameUiSession, replacingCtx: Boolean(previousCtx && previousCtx !== ctx), hasPreviousUi: Boolean(previousUi) },
+		});
+		if (previousCtx && previousCtx !== ctx && !sameUiSession && (this.editorInstalled || this.footerInstalled)) this.disable();
+		if (!previousCtx) this.sessionStartTime = this.now();
+		if ((previousCtx !== ctx || previousUi !== next.ui) && !sameUiSession) {
+			this.generation += 1;
+			this.stopRenderTimer();
+		}
+		this.ctx = ctx;
+		this.ui = next.ui;
+		this.failure = undefined;
+		// [local patch] 新进程（含 /reload 与重启）启动时从状态文件恢复常驻吞吐率。
+		if (this.tokensPerSecond === null) {
+			const restored = readStoredThroughput();
+			if (restored !== null) {
+				this.tokensPerSecond = restored;
+				this.lastPersistedThroughput = restored;
+			}
+		}
+	}
+
+	configure(settings: BottomInputRuntimeSettings): BottomInputRuntimeStatus {
+		if (typeof settings.beautifiedInputEnabled === "boolean") this.beautifiedInputEnabled = settings.beautifiedInputEnabled;
+		if (typeof settings.footerEnabled === "boolean") this.footerEnabled = settings.footerEnabled;
+		if (settings.inputMetrics) this.inputMetrics = normalizeInputMetricsSettings(settings.inputMetrics, this.inputMetrics);
+		return this.syncLayout();
+	}
+
+	dispose(): void {
+		this.generation += 1;
+		this.disable();
+		this.ctx = undefined;
+		this.ui = undefined;
+		this.stashedEditorText = null;
+		this.liveUsage = null;
+		this.latestAssistantUsage = null;
+		this.outputStartedAt = null;
+		this.tokensPerSecond = null;
+		this.currentThinkingLevel = null;
+		this.lastPrompt = "";
+		this.sessionStartTime = this.now();
+	}
+
+	getStatus(): BottomInputRuntimeStatus {
+		return this.toStatus();
+	}
+
+	setBeautifiedInputEnabled(enabled: boolean): void {
+		this.configure({ beautifiedInputEnabled: enabled });
+	}
+
+	resetSessionStartTime(): void {
+		this.sessionStartTime = this.now();
+		this.outputStartedAt = null;
+		// [local patch] 不再清空 tokensPerSecond：reload / 新会话后 » tok/s 仍常驻显示。
+		this.resetLayoutCache();
+		this.requestRender();
+	}
+
+	setLastPrompt(prompt: unknown): void {
+		this.lastPrompt = normalizePromptText(prompt);
+		this.resetLayoutCache();
+		this.requestRender();
+	}
+
+	setThinkingLevel(level: unknown): void {
+		this.currentThinkingLevel = typeof level === "string" && level ? level : null;
+		this.resetLayoutCache();
+		this.requestRender();
+	}
+
+	setStreaming(streaming: boolean): void {
+		this.isStreaming = streaming;
+		if (streaming) {
+			this.liveUsage = null;
+			this.outputStartedAt = null;
+		}
+		this.resetLayoutCache();
+		this.requestRender();
+	}
+
+	setLiveUsage(usage: unknown, assistantMessageEvent?: unknown): void {
+		if (this.outputStartedAt === null && isAssistantOutputDelta(assistantMessageEvent)) {
+			this.outputStartedAt = this.now();
+		}
+		if (isAssistantUsage(usage) && getUsageTokenTotal(usage) > 0) {
+			this.liveUsage = usage;
+			this.latestAssistantUsage = usage;
+		}
+		this.resetLayoutCache();
+		this.requestRender();
+	}
+
+	clearLiveUsage(message?: unknown): void {
+		if (message === undefined) {
+			this.outputStartedAt = null;
+		} else {
+			this.completeThroughput(message);
+		}
+		this.isStreaming = false;
+		this.liveUsage = null;
+		this.resetLayoutCache();
+		this.requestRender();
+	}
+
+	resetThroughput(): void {
+		this.outputStartedAt = null;
+		// [local patch] 不再清空 tokensPerSecond：model_select 切换模型时保持常驻显示。
+		this.resetLayoutCache();
+		this.requestRender();
+	}
+
+	requestRender(options: { full?: boolean } = {}): void {
+		if (!(this.editorInstalled || this.footerInstalled) || this.renderTimer) {
+			if (options.full) this.renderPendingFull = true;
+			return;
+		}
+		if (options.full) this.renderPendingFull = true;
+		const generation = this.generation;
+		this.renderTimer = setTimeout(() => {
+			this.renderTimer = null;
+			if (generation !== this.generation || !(this.editorInstalled || this.footerInstalled)) {
+				this.renderPendingFull = false;
+				return;
+			}
+			const full = this.renderPendingFull;
+			this.renderPendingFull = false;
+			if (!this.diagnoseTui(this.tui)) {
+				this.failClosed("unsupported Pi TUI renderer mode");
+				return;
+			}
+			this.tui?.requestRender?.(full || undefined);
+		}, STATUS_RENDER_DEBOUNCE_MS);
+		this.renderTimer.unref?.();
+	}
+
+	stashOrRestoreEditorText(ctx: any = this.ctx): void {
+		if (!ctx?.hasUI || !ctx.ui) return;
+		const rawText = getCurrentEditorText(ctx, this.editorInstance);
+		const hasStash = this.stashedEditorText !== null;
+		if (!hasNonWhitespaceText(rawText)) {
+			if (!hasStash) return notify(ctx, "Nothing to stash", "info");
+			setEditorText(ctx, this.editorInstance, this.stashedEditorText ?? "");
+			this.stashedEditorText = null;
+			ctx.ui.setStatus?.(STASH_STATUS_KEY, undefined);
+			notify(ctx, "Stash restored", "info");
+			this.requestRender();
+			return;
+		}
+		this.stashedEditorText = rawText;
+		setEditorText(ctx, this.editorInstance, "");
+		ctx.ui.setStatus?.(STASH_STATUS_KEY, "stash");
+		notify(ctx, hasStash ? "Stash updated" : "Text stashed", "info");
+		this.requestRender();
+	}
+
+	copyEditorText(ctx: any = this.ctx): void {
+		const text = getCurrentEditorText(ctx, this.editorInstance);
+		if (!hasNonWhitespaceText(text)) return notify(ctx, "Nothing to copy", "info");
+		const generation = this.generation;
+		void this.copyTextToClipboard(text).then(
+			() => generation === this.generation && notify(ctx, "Copied editor text", "info"),
+			() => generation === this.generation && notify(ctx, "Copy failed", "warning"),
+		);
+	}
+
+	cutEditorText(ctx: any = this.ctx): void {
+		const text = getCurrentEditorText(ctx, this.editorInstance);
+		if (!hasNonWhitespaceText(text)) return notify(ctx, "Nothing to cut", "info");
+		const generation = this.generation;
+		const editor = this.editorInstance;
+		void this.copyTextToClipboard(text).then(() => {
+			if (generation !== this.generation) return;
+			setEditorText(ctx, editor, "");
+			notify(ctx, "Cut editor text", "info");
+			this.requestRender();
+		}, () => generation === this.generation && notify(ctx, "Cut failed", "warning"));
+	}
+
+	setShortcuts(shortcuts: Partial<BottomInputShortcuts> | undefined): void {
+		this.shortcuts = resolveBottomInputShortcuts(shortcuts);
+	}
+
+	private completeThroughput(message: unknown): void {
+		const startedAt = this.outputStartedAt;
+		this.outputStartedAt = null;
+		const usage = readCompletedAssistantUsage(message);
+		if (startedAt === null || !usage || usage.output <= 0) return;
+		const durationMs = this.now() - startedAt;
+		if (!Number.isFinite(durationMs) || durationMs < MIN_THROUGHPUT_DURATION_MS) return;
+		const rate = usage.output * 1_000 / durationMs;
+		if (Number.isFinite(rate) && rate > 0) {
+			this.tokensPerSecond = rate;
+			// [local patch] 持久化实测吞吐率（变化 0.05 以上才写盘）。
+			if (this.lastPersistedThroughput === null || Math.abs(this.lastPersistedThroughput - rate) >= 0.05) {
+				this.lastPersistedThroughput = rate;
+				writeStoredThroughput(rate);
+			}
+		}
+	}
+
+	private syncLayout(): BottomInputRuntimeStatus {
+		this.resetLayoutCache();
+		this.debug("sync_layout", this.ctx, {
+			details: {
+				beautifiedInputEnabled: this.beautifiedInputEnabled,
+				footerEnabled: this.footerEnabled,
+			},
+		});
+		if (!this.beautifiedInputEnabled && !this.footerEnabled) return this.disable();
+		const ui = this.ui;
+		if (!ui) return this.failClosed("bottom input requires a bound TUI session");
+
+		const failures: string[] = [];
+		try {
+			this.reconcileEditor(ui);
+		} catch (error) {
+			failures.push(formatFailure(error));
+		}
+		try {
+			this.reconcileFooter(ui);
+		} catch (error) {
+			failures.push(formatFailure(error));
+		}
+		try {
+			this.syncEditorServices();
+		} catch (error) {
+			failures.push(formatFailure(error));
+		}
+
+		this.failure = failures.length > 0 ? failures.join("; ") : undefined;
+		if (this.editorInstalled || this.footerInstalled) this.requestRender({ full: true });
+		return this.toStatus();
+	}
+
+	private reconcileEditor(ui: RuntimeUI): void {
+		if (!this.beautifiedInputEnabled) {
+			this.restoreDefaultEditor(ui);
+			return;
+		}
+		if (this.editorInstalled) return;
+		this.validateEditorUI(ui);
+		const ownerGeneration = this.generation;
+		const factory = this.createEditorFactory(ownerGeneration);
+		this.editorOwnerGeneration = ownerGeneration;
+		this.editorFactory = factory;
+		try {
+			ui.setEditorComponent!(factory);
+			this.editorInstalled = true;
+		} catch (error) {
+			this.editorOwnerGeneration = null;
+			this.editorFactory = undefined;
+			throw error;
+		}
+	}
+
+	private reconcileFooter(ui: RuntimeUI): void {
+		if (!this.footerEnabled) {
+			this.restoreDefaultFooter(ui);
+			return;
+		}
+		if (this.footerInstalled) return;
+		this.validateFooterUI(ui);
+		const ownerGeneration = this.generation;
+		const factory = this.createFooterFactory(ownerGeneration);
+		this.footerOwnerGeneration = ownerGeneration;
+		this.footerFactory = factory;
+		try {
+			ui.setFooter!(factory);
+			this.footerInstalled = true;
+		} catch (error) {
+			this.footerOwnerGeneration = null;
+			this.footerFactory = undefined;
+			throw error;
+		}
+	}
+
+	private syncEditorServices(): void {
+		if (this.editorInstalled) {
+			this.installInputListener();
+			return;
+		}
+		this.removeInputListener?.();
+		this.removeInputListener = null;
+		if (!this.footerInstalled) {
+			this.stopRenderTimer();
+			this.tui = undefined;
+		}
+	}
+
+	private disable(): BottomInputRuntimeStatus {
+		if (!this.editorInstalled && !this.footerInstalled && !this.editorFactory && !this.footerFactory && !this.failure) return this.toStatus();
+		this.debug("disable", this.ctx);
+		this.stopRenderTimer();
+		this.removeInputListener?.();
+		this.removeInputListener = null;
+		const failures: string[] = [];
+		if (this.ui) {
+			try {
+				this.restoreDefaultEditor(this.ui);
+			} catch (error) {
+				if (!isStaleCtxError(error)) failures.push(formatFailure(error));
+			}
+			try {
+				this.restoreDefaultFooter(this.ui);
+			} catch (error) {
+				if (!isStaleCtxError(error)) failures.push(formatFailure(error));
+			}
+		}
+		this.editorInstalled = false;
+		this.footerInstalled = false;
+		this.editorOwnerGeneration = null;
+		this.footerOwnerGeneration = null;
+		this.editorFactory = undefined;
+		this.footerFactory = undefined;
+		this.editorInstance = undefined;
+		this.footerComponent = undefined;
+		this.footerData = undefined;
+		this.tui = undefined;
+		this.theme = undefined;
+		this.editorTheme = undefined;
+		this.failure = failures.length > 0 ? failures.join("; ") : undefined;
+		this.resetLayoutCache();
+		return this.toStatus();
+	}
+
+	private validateEditorUI(ui: RuntimeUI): void {
+		if (typeof ui.setEditorComponent !== "function") throw new Error("bottom input expected ctx.ui.setEditorComponent(factory)");
+		if (typeof ui.getEditorComponent !== "function") throw new Error("bottom input expected ctx.ui.getEditorComponent()");
+	}
+
+	private validateFooterUI(ui: RuntimeUI): void {
+		if (typeof ui.setFooter !== "function") throw new Error("bottom input expected ctx.ui.setFooter(factory)");
+	}
+
+	private createEditorFactory(ownerGeneration: number): (tui: any, theme: any, keybindings: any) => any {
+		return (tui, theme, keybindings) => {
+			if (ownerGeneration !== this.generation || ownerGeneration !== this.editorOwnerGeneration) return createStaleEditorFallback();
+			if (!this.diagnoseTui(tui)) throw new Error("unsupported Pi TUI renderer mode");
+			this.tui = tui;
+			this.editorTheme = theme ?? FALLBACK_EDITOR_THEME;
+			const owner = this;
+			const editor = createBottomInputEditor(tui, this.editorTheme, keybindings, {
+				get beautifiedInputEnabled() { return owner.beautifiedInputEnabled; },
+				getTheme: () => owner.getRenderTheme(),
+				getFrameStatus: (width) => owner.getStatusLayout(width).frameStatus,
+			});
+			this.editorInstance = editor;
+			this.patchEditorInput(editor);
+			return editor;
+		};
+	}
+
+	private createFooterFactory(ownerGeneration: number): (tui: any, theme: any, footerData: any) => any {
+		return (tui, theme, footerData) => {
+			if (ownerGeneration !== this.generation || ownerGeneration !== this.footerOwnerGeneration) return createStaleFooterFallback();
+			const generation = this.generation;
+			this.tui = tui;
+			this.theme = theme ?? FALLBACK_EDITOR_THEME;
+			this.footerData = footerData;
+			let active = true;
+			const restoreLocalFileOpener = installWindowsLocalFileOpener(tui, message => {
+				if (active && generation === this.generation) this.ui?.notify?.(message, "error");
+			}, undefined, event => {
+				if (!active || generation !== this.generation) return;
+				this.ui?.notify?.(event === "ready"
+					? "文件链接诊断已接入（v3）；本地文件仅 Ctrl＋左键打开。"
+					: "已收到中文文件链接点击，正在请求 Windows 打开。", "info");
+			});
+			const unsubscribeBranch = footerData?.onBranchChange?.(() => {
+				if (generation !== this.generation) return;
+				this.resetLayoutCache();
+				this.requestRender();
+			});
+			const footer = {
+				__alpsBottomInputOwner: true,
+				get __alpsBottomInputActive() { return active; },
+				dispose: () => {
+					if (!active) return;
+					active = false;
+					restoreLocalFileOpener();
+					unsubscribeBranch?.();
+				},
+				invalidate: () => generation === this.generation && this.requestRender(),
+				render: (width: number) => {
+					if (generation !== this.generation) return [];
+					const rendered = this.getStatusLayout(width);
+					return [...rendered.secondaryLines, ...rendered.lastPromptLines];
+				},
+			};
+			this.footerComponent = footer;
+			return footer;
+		};
+	}
+
+	private getRenderTheme(): any {
+		return this.theme ?? this.ui?.theme ?? FALLBACK_EDITOR_THEME;
+	}
+
+	private getStatusLayout(width: number): StatusLayout {
+		const now = this.now();
+		const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+		// [local patch] setStatus() requests a render but does not expire ALPS's layout cache.
+		const extensionStatusKey = JSON.stringify({
+			statuses: getVisibleExtensionStatuses(this.footerData),
+			workspacePath: readWorkspacePath(this.ctx),
+			fast: getFastIndicator(this.footerData),
+		});
+		if (this.cachedLayout && this.cachedLayout.width === safeWidth && this.cachedLayout.expiresAt > now
+			&& this.cachedLayout.extensionStatusKey === extensionStatusKey) {
+			return cloneStatusLayout(this.cachedLayout.result);
+		}
+		const result = renderBottomInputStatus({
+			ctx: this.ctx,
+			footerData: this.footerData,
+			theme: this.getRenderTheme(),
+			width: safeWidth,
+			beautifiedInputEnabled: this.beautifiedInputEnabled,
+			isStreaming: this.isStreaming,
+			liveUsage: this.liveUsage,
+			latestAssistantUsage: this.latestAssistantUsage,
+			currentThinkingLevel: this.currentThinkingLevel,
+			tokensPerSecond: this.tokensPerSecond,
+			sessionStartTime: this.sessionStartTime,
+			now,
+			lastPrompt: this.lastPrompt,
+			inputMetrics: this.inputMetrics,
+			icons: getBottomInputIcons(),
+		});
+		const layout: StatusLayout = {
+			topLines: [...result.topLines],
+			secondaryLines: [...result.secondaryLines],
+			lastPromptLines: [...result.lastPromptLines],
+			frameStatus: { ...result.frameStatus },
+		};
+		this.cachedLayout = {
+			width: safeWidth,
+			extensionStatusKey,
+			expiresAt: now + (this.isStreaming ? STREAMING_LAYOUT_CACHE_TTL_MS : LAYOUT_CACHE_TTL_MS),
+			result: layout,
+		};
+		return cloneStatusLayout(layout);
+	}
+
+	private patchEditorInput(editor: any): void {
+		if (!editor || typeof editor.handleInput !== "function" || editor.__alpsBottomInputPatched) return;
+		const originalHandleInput = editor.handleInput.bind(editor);
+		editor.handleInput = (data: string) => {
+			if (this.handleShortcutInput(data)) return;
+			originalHandleInput(data);
+			this.requestRender();
+		};
+		for (const method of ["setText", "insertTextAtCursor"] as const) {
+			if (typeof editor[method] !== "function") continue;
+			const original = editor[method].bind(editor);
+			editor[method] = (text: string) => {
+				const result = original(text);
+				this.requestRender();
+				return result;
+			};
+		}
+		editor.__alpsBottomInputPatched = true;
+	}
+
+	private installInputListener(): void {
+		if (this.removeInputListener || typeof this.ui?.onTerminalInput !== "function") return;
+		const generation = this.generation;
+		this.removeInputListener = this.ui.onTerminalInput((data) => {
+			if (generation !== this.generation) return undefined;
+			return this.handleShortcutInput(data) ? { consume: true } : undefined;
+		}) ?? null;
+	}
+
+	private handleShortcutInput(data: string): boolean {
+		if (!this.beautifiedInputEnabled || hasOverlay(this.ctx, this.tui)) return false;
+		if (isStashShortcutInput(data, this.shortcuts.stashEditor)) return this.stashOrRestoreEditorText(this.ctx), true;
+		if (matchesConfiguredShortcut(data, this.shortcuts.copyEditor)) return this.copyEditorText(this.ctx), true;
+		if (matchesConfiguredShortcut(data, this.shortcuts.cutEditor)) return this.cutEditorText(this.ctx), true;
+		if (matchesConfiguredShortcut(data, this.shortcuts.editorStart)) return moveEditorToBoundary(this.editorInstance, "start");
+		if (matchesConfiguredShortcut(data, this.shortcuts.editorEnd)) return moveEditorToBoundary(this.editorInstance, "end");
+		return false;
+	}
+
+	private diagnoseTui(tui: any): boolean {
+		const capabilities = inspectPiRuntimeCapabilities(tui);
+		const failure = capabilities.tui.failure;
+		if (failure !== this.lastTuiFailure) {
+			this.lastTuiFailure = failure;
+			for (const message of formatPiCapabilityFailures(capabilities).filter((entry) => entry.startsWith("tui:"))) {
+				console.debug?.(`[alps-pi] ${message}`);
+			}
+		}
+		return capabilities.tui.supported;
+	}
+
+	private copyTextToClipboard(text: string): Promise<void> {
+		try {
+			return Promise.resolve(this.copyToClipboardImpl(text));
+		} catch {
+			return Promise.reject(new Error("copy failed"));
+		}
+	}
+
+	private restoreDefaultEditor(ui: RuntimeUI): void {
+		if (!this.editorInstalled && !this.editorFactory) return;
+		try {
+			if (ui.getEditorComponent?.() === this.editorFactory) ui.setEditorComponent?.(undefined);
+			ui.setStatus?.(STASH_STATUS_KEY, undefined);
+		} finally {
+			this.editorInstalled = false;
+			this.editorOwnerGeneration = null;
+			this.editorFactory = undefined;
+			this.editorInstance = undefined;
+			this.editorTheme = undefined;
+		}
+	}
+
+	private restoreDefaultFooter(ui: RuntimeUI): void {
+		if (!this.footerInstalled && !this.footerFactory) return;
+		try {
+			if (isActiveAlpsFooterComponent(this.footerComponent) || this.footerComponent === undefined && this.footerFactory) {
+				ui.setFooter?.(undefined);
+			}
+		} finally {
+			this.footerInstalled = false;
+			this.footerOwnerGeneration = null;
+			this.footerFactory = undefined;
+			this.footerComponent = undefined;
+			this.footerData = undefined;
+			this.theme = undefined;
+		}
+	}
+
+	private failClosed(reason: string): BottomInputRuntimeStatus {
+		this.debug("fail_closed", this.ctx, { reason });
+		this.disable();
+		this.failure = reason;
+		return this.toStatus();
+	}
+
+	private stopRenderTimer(): void {
+		if (this.renderTimer) clearTimeout(this.renderTimer);
+		this.renderTimer = null;
+		this.renderPendingFull = false;
+	}
+
+	private resetLayoutCache(): void {
+		this.cachedLayout = null;
+	}
+
+	private toStatus(): BottomInputRuntimeStatus {
+		const status = {
+			enabled: this.beautifiedInputEnabled || this.footerEnabled,
+			installed: this.editorInstalled || this.footerInstalled,
+			editorEnabled: this.beautifiedInputEnabled,
+			editorInstalled: this.editorInstalled,
+			footerEnabled: this.footerEnabled,
+			footerInstalled: this.footerInstalled,
+		};
+		return this.failure ? { ...status, failure: this.failure } : status;
+	}
+
+	private debug(event: Parameters<typeof writeBottomInputDebugLog>[0]["event"], ctx?: any, extra: Omit<Parameters<typeof writeBottomInputDebugLog>[0], "event" | "state" | "ctx" | "currentCtx" | "currentUi"> = {}): void {
+		writeBottomInputDebugLog({
+			event,
+			ctx,
+			currentCtx: this.ctx,
+			currentUi: this.ui,
+			state: {
+				enabled: this.beautifiedInputEnabled || this.footerEnabled,
+				installed: this.editorInstalled || this.footerInstalled,
+				layoutInstalled: this.editorInstalled || this.footerInstalled,
+				generation: this.generation,
+				layoutOwnerGeneration: this.editorOwnerGeneration ?? this.footerOwnerGeneration,
+				hasCompositor: false,
+				hasEditor: Boolean(this.editorInstance),
+				hasFooter: Boolean(this.footerComponent),
+				failure: this.failure,
+			},
+			...extra,
+		});
+	}
+}
+
+function isAssistantOutputDelta(value: unknown): boolean {
+	if (!value || typeof value !== "object") return false;
+	const event = value as { type?: unknown; delta?: unknown };
+	return (event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta")
+		&& typeof event.delta === "string"
+		&& event.delta.length > 0;
+}
+
+function readCompletedAssistantUsage(value: unknown): AssistantUsage | null {
+	if (!value || typeof value !== "object") return null;
+	const message = value as { role?: unknown; stopReason?: unknown; usage?: unknown };
+	if (message.role !== "assistant" || message.stopReason === "error" || message.stopReason === "aborted") return null;
+	return isAssistantUsage(message.usage) ? message.usage : null;
+}
+
+function isActiveAlpsFooterComponent(component: any): boolean {
+	return Boolean(component?.__alpsBottomInputOwner && component.__alpsBottomInputActive === true);
+}
+
+function createStaleEditorFallback() {
+	return { render: () => [], handleInput: () => undefined };
+}
+
+function createStaleFooterFallback() {
+	return { render: () => [], dispose: () => undefined, invalidate: () => undefined };
+}
+
+function cloneStatusLayout(layout: StatusLayout): StatusLayout {
+	return {
+		topLines: [...layout.topLines],
+		secondaryLines: [...layout.secondaryLines],
+		lastPromptLines: [...layout.lastPromptLines],
+		frameStatus: { ...layout.frameStatus },
+	};
+}
+
+function getCurrentEditorText(ctx: any, editor: any): string {
+	try {
+		if (typeof editor?.getText === "function") return String(editor.getText() ?? "");
+		const ui = readRuntimeUI(ctx);
+		return ui.stale ? "" : String(ui.ui?.getEditorText?.() ?? "");
+	} catch {
+		return "";
+	}
+}
+
+function setEditorText(ctx: any, editor: any, text: string): void {
+	try {
+		if (typeof editor?.setText === "function") editor.setText(text);
+		else {
+			const ui = readRuntimeUI(ctx);
+			if (!ui.stale) ui.ui?.setEditorText?.(text);
+		}
+	} catch {
+		// 编辑器 API 失败不得破坏普通输入。
+	}
+}
+
+function moveEditorToBoundary(editor: any, boundary: "start" | "end"): boolean {
+	try {
+		if (boundary === "start" && typeof editor?.moveToStart === "function") return editor.moveToStart(), true;
+		if (boundary === "end" && typeof editor?.moveToEnd === "function") return editor.moveToEnd(), true;
+		if (typeof editor?.handleInput === "function") {
+			editor.handleInput(boundary === "start" ? "\x1b[H" : "\x1b[F");
+			return true;
+		}
+	} catch {
+		return false;
+	}
+	return false;
+}
+
+export function registerBottomInputShortcuts(pi: ExtensionAPI, runtime: BottomInputRuntime): void {
+	pi.registerShortcut?.("alt+s", {
+		description: "暂存/恢复当前输入框文本",
+		handler: (ctx: any) => runtime.stashOrRestoreEditorText(ctx),
+	});
+}
+
+function notify(ctx: any, message: string, level: "info" | "warning" | "error"): void {
+	try {
+		const ui = readRuntimeUI(ctx);
+		if (!ui.stale) ui.ui?.notify?.(message, level);
+	} catch {
+		// stale session UI 不再通知。
+	}
+}
+
+function hasOverlay(ctx: any, tui?: any): boolean {
+	try {
+		const ui = readRuntimeUI(ctx);
+		if (ui.stale) return false;
+		return typeof tui?.hasOverlay === "function" ? Boolean(tui.hasOverlay()) : false;
+	} catch {
+		return false;
+	}
+}
+
+function readRuntimeUI(ctx: any): RuntimeUIReadResult {
+	try {
+		if (!ctx || ctx.mode !== "tui" || ctx.hasUI !== true || !ctx.ui) return { stale: false };
+		return { stale: false, ui: ctx.ui as RuntimeUI };
+	} catch (error) {
+		return isStaleCtxError(error) ? { stale: true } : { stale: false };
+	}
+}
+
+function isStaleCtxError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return message.includes("extension ctx is stale") || message.includes("stale ctx");
+}
+
+function hasNonWhitespaceText(value: string): boolean {
+	return /\S/.test(value);
+}
+
+function formatFailure(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}

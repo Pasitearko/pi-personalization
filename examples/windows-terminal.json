@@ -1,0 +1,14 @@
+{
+  "comment": "Example profile fragment only. Merge manually; do not replace your whole settings.json.",
+  "profiles": {
+    "defaults": {
+      "font": {
+        "face": "Studio Latin Italic NF CN"
+      },
+      "colorScheme": "Campbell",
+      "opacity": 75,
+      "useAcrylic": true,
+      "backgroundImageOpacity": 0.13
+    }
+  }
+}

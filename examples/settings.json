@@ -1,0 +1,33 @@
+{
+  "tuiMode": "fullscreen",
+  "fullscreenScrollbar": "hidden",
+  "theme": "no-tool-bg",
+  "terminal": {
+    "hyperlinks": true
+  },
+  "alps-pi": {
+    "chromeFrame": {
+      "enabled": true,
+      "assistantFrame": true,
+      "toolCompactMode": "compact",
+      "compactEditTool": false
+    },
+    "fixedBottomEditor": {
+      "enabled": true
+    },
+    "beautifiedInput": {
+      "enabled": true
+    },
+    "footer": {
+      "enabled": true
+    },
+    "inputMetrics": {
+      "inputTokens": true,
+      "outputTokens": true,
+      "cacheHit": true,
+      "tokenSpeed": true,
+      "cost": true,
+      "elapsedTime": false
+    }
+  }
+}
