@@ -3,6 +3,20 @@
 
 An installable Pi package distilled from a locally customized setup: weather, quota row, per-round timer, OpenAI Fast switch, message timestamps, prompt timeline, whole-frame collapse/expand, clean selection/copy, and a minimal theme.
 
+## Previews
+
+These are privacy-safe demo renders, not screenshots of private sessions or accounts. Real Pi / ALPS frames and actual click/selection handlers are used with fictional dialogue, paths, timestamps and values; footer rows are illustrative. Terminal fonts and platform behavior may differ.
+
+![Interface overview with fictional status values](docs/previews/overview.png)
+
+![Whole-frame click: compact and expanded states](docs/previews/frame-click.png)
+
+![Native versus clean selection, including actual copied text](docs/previews/clean-selection.png)
+
+[Preview provenance and privacy notes](docs/previews/README.md)
+
+## Install
+
 ```sh
 pi install git:github.com/Pasitearko/pi-personalization
 ```
