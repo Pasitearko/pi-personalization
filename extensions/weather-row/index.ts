@@ -7,7 +7,7 @@ import {
 } from "./weather.ts";
 import { createWeatherStorage, type WeatherCache, type WeatherStorage } from "./storage.ts";
 
-const WIDGET_KEY = "jinshanwei-weather";
+const WIDGET_KEY = "weather-row";
 interface Flight { controller: AbortController; timeout: ReturnType<typeof setTimeout>; promise: Promise<void> }
 interface CityState {
   snapshot?: WeatherSnapshot; status: WeatherStatus; lastAttempt: number; flight?: Flight;
@@ -250,7 +250,7 @@ export default function weatherExtension(pi: ExtensionAPI, storage: WeatherStora
       const target = CITIES.find(city => city.id === action || city.name === action);
       if (target) { selectCity(target); return; }
       if (action && action !== "refresh") {
-        ctx.ui.notify("用法：/weather（刷新当前城市）或 /weather next（仅切换缓存）；也可指定 jinshanwei / strasbourg / tokyo。", "warning");
+        ctx.ui.notify("用法：/weather（刷新当前城市）或 /weather next（仅切换缓存）；也可指定已配置的城市 ID。", "warning");
         return;
       }
       const city = currentCity(), state = states.get(city.id)!;

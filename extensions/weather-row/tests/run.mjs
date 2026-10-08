@@ -74,7 +74,7 @@ function harness(t, { mode = "tui", hasUI = true, cache: initialCache, storage: 
       widgets.get(key)?.dispose?.(); widgets.delete(key);
       if (factory !== undefined) widgets.set(key, typeof factory === "function"
         ? factory({ requestRender() { renderCount++; } }, themes.dark) : { render: () => factory });
-      if (key === "jinshanwei-weather") placement = options?.placement;
+      if (key === "weather-row") placement = options?.placement;
     },
     notify(message, level) { notices.push({ message, level }); },
     setFooter() { assert.fail("must not replace footer"); },
@@ -90,7 +90,7 @@ function harness(t, { mode = "tui", hasUI = true, cache: initialCache, storage: 
   return {
     ctx, intervals, timeouts, calls, queue, notices, commands, saves,
     get cache() { return cache; }, get loads() { return loads; },
-    get widget() { return widgets.get("jinshanwei-weather"); },
+    get widget() { return widgets.get("weather-row"); },
     get widgetOrder() { return [...widgets.keys()]; },
     get placement() { return placement; }, get renderCount() { return renderCount; },
     advance(ms) { now += ms; }, emit(name) { return handlers.get(name)?.({}, ctx); },
@@ -105,9 +105,9 @@ function harness(t, { mode = "tui", hasUI = true, cache: initialCache, storage: 
     },
     // Pi constructs a new context wrapper for every slash-command invocation.
     command(args = "") { return commands.get("weather").handler(args, { ...ctx }); },
-    text(width = 160) { return (widgets.get("jinshanwei-weather")?.render(width) ?? []).map(plain).join("\n"); },
+    text(width = 160) { return (widgets.get("weather-row")?.render(width) ?? []).map(plain).join("\n"); },
     mouse(overrides = {}) {
-      return dispatchMouseEvent(widgets.get("jinshanwei-weather"), {
+      return dispatchMouseEvent(widgets.get("weather-row"), {
         type: "click", button: "left", x: 4, y: 0, screenX: 4, screenY: 0, width: 160, height: 1,
         shift: false, ctrl: false, alt: false, clickCount: 1, ...overrides,
       });
@@ -476,13 +476,13 @@ await test("RPC/print/no-UI performs no network, persistence or timers", async t
 });
 await test("checklist added after weather preserves plan → weather and cached mouse switching", async t => {
   const h = harness(t); h.emit("session_start"); await flush(); h.ctx.ui.setWidget("plannotator-progress", ["☐ implement"]); await flush();
-  assert.deepEqual(h.widgetOrder, ["plannotator-progress", "jinshanwei-weather"]); assert.equal(h.calls.length, 3); assert.equal(h.intervals.size, 0); assert.equal(h.timeouts.size, 1);
+  assert.deepEqual(h.widgetOrder, ["plannotator-progress", "weather-row"]); assert.equal(h.calls.length, 3); assert.equal(h.intervals.size, 0); assert.equal(h.timeouts.size, 1);
   h.mouse(); assert.match(h.text(), /斯特拉斯堡/); assert.equal(h.calls.length, 3);
 });
 await test("checklist-first startup and repeated checklist edits do not refetch or duplicate timer", async t => {
   const h = harness(t); h.ctx.ui.setWidget("plannotator-progress", ["☐ first"]); h.emit("session_start"); await flush();
   h.ctx.ui.setWidget("plannotator-progress", ["☑ first"]); h.ctx.ui.setWidget("plannotator-progress", ["☑ first", "☐ next"]); await flush();
-  assert.deepEqual(h.widgetOrder, ["plannotator-progress", "jinshanwei-weather"]); assert.equal(h.calls.length, 3); assert.equal(h.intervals.size, 0); assert.equal(h.timeouts.size, 1);
+  assert.deepEqual(h.widgetOrder, ["plannotator-progress", "weather-row"]); assert.equal(h.calls.length, 3); assert.equal(h.intervals.size, 0); assert.equal(h.timeouts.size, 1);
 });
 await test("ordering hook restores setter and queued reordering cannot resurrect shutdown UI", async t => {
   const h = harness(t), original = h.ctx.ui.setWidget; h.emit("session_start"); await flush(); assert.notEqual(h.ctx.ui.setWidget, original);
@@ -492,7 +492,7 @@ await test("ordering hook restores setter and queued reordering cannot resurrect
 await test("unrelated widgets and later hooks are passed through unchanged", async t => {
   const h = harness(t); h.emit("session_start"); await flush(); const wrapped = h.ctx.ui.setWidget;
   const later = (...args) => wrapped(...args); h.ctx.ui.setWidget = later; h.ctx.ui.setWidget("unrelated", ["keep me"]); await flush();
-  assert.deepEqual(h.widgetOrder, ["jinshanwei-weather", "unrelated"]); await h.emit("session_shutdown"); assert.equal(h.ctx.ui.setWidget, later);
+  assert.deepEqual(h.widgetOrder, ["weather-row", "unrelated"]); await h.emit("session_shutdown"); assert.equal(h.ctx.ui.setWidget, later);
 });
 await test("Pi's actual extension loader accepts weather alongside timer and quota", async () => {
   const loader = await jiti.import(join(modules, "@earendil-works/pi-coding-agent/dist/core/extensions/loader.js"));

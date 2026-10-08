@@ -791,7 +791,7 @@ test("settled timeline stays idle and pending microtasks cannot repaint after di
 
 test("Pi's actual extension loader accepts timeline alongside existing local extensions", async () => {
   const loader = await jiti.import(join(modules, "@earendil-works/pi-coding-agent/dist/core/extensions/loader.js"));
-  const extensions = [join(root, "index.ts"), ...["working-timer", "jinshanwei-weather", "subscription-usage-row"]
+  const extensions = [join(root, "index.ts"), ...["working-timer", "weather-row", "subscription-usage-row"]
     .map(name => resolve(root, "..", name, "index.ts"))];
   const loaded = await loader.loadExtensions(extensions, process.cwd());
   assert.deepEqual(loaded.errors, []);

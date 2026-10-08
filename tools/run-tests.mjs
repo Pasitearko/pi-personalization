@@ -7,7 +7,7 @@ const modules=path.join(projectRoot,'node_modules');
 // macOS /var aliases /private/var. Canonicalize the OS temp root without
 // relaxing the patch tool's rejection of symlinked user-supplied paths.
 const temp=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'pi-personalization-test-'));
-const tests=['tests/setup.mjs','tests/privacy.mjs','tests/openai-fast.mjs','tests/weather-configuration.mjs','extensions/conversation-timeline/tests/run.mjs','extensions/jinshanwei-weather/tests/run.mjs','extensions/working-timer/tests/run.mjs','tests/message-timestamps.mjs','tests/frame-click-toggle.mjs','tests/clean-frame-copy.mjs','tests/subscription-usage-row.mjs','tests/integration.mjs'];
+const tests=['tests/setup.mjs','tests/privacy.mjs','tests/openai-fast.mjs','tests/weather-configuration.mjs','extensions/conversation-timeline/tests/run.mjs','extensions/weather-row/tests/run.mjs','extensions/working-timer/tests/run.mjs','tests/message-timestamps.mjs','tests/frame-click-toggle.mjs','tests/clean-frame-copy.mjs','tests/subscription-usage-row.mjs','tests/integration.mjs'];
 let failed=false;
 try {
  // Only this project's disposable development dependencies, never installed Pi.

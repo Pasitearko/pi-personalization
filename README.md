@@ -57,7 +57,7 @@ export PI_WEATHER_LOCATIONS='[{"id":"london","name":"London","latitude":51.5074,
 $env:PI_WEATHER_LOCATIONS = '[{"id":"london","name":"London","latitude":51.5074,"longitude":-0.1278}]'
 ```
 
-天气请求的坐标会发送给 Open-Meteo。当前天气数据时间统一采用 Asia/Shanghai，与城市所在地的昼夜标志分开处理；这是明确的显示约定，不会读取系统定位。重启 Pi 生效。目录保留历史名称 `jinshanwei-weather`，公开默认位置已改为示例城市。
+天气请求的坐标会发送给 Open-Meteo。当前天气数据时间统一采用 Asia/Shanghai，与城市所在地的昼夜标志分开处理；这是明确的显示约定，不会读取系统定位。重启 Pi 生效。公开默认位置只是示例，可自行更改。
 
 ### 鼠标规则
 

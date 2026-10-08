@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import {createJiti} from 'jiti';
 import path from 'node:path';
 import {projectRoot} from '../tools/setup.mjs';
-const weather=await createJiti(import.meta.url,{fsCache:false}).import(path.join(projectRoot,'extensions/jinshanwei-weather/weather.ts'));
+const weather=await createJiti(import.meta.url,{fsCache:false}).import(path.join(projectRoot,'extensions/weather-row/weather.ts'));
 test('explicit cities roundtrip without mutation or automatic home location',()=>{
  const input=[{id:'london',name:'London',latitude:51.5,longitude:-0.1,private:'discard'}],result=weather.configuredCities(JSON.stringify(input));assert.deepEqual(result,[{id:'london',name:'London',latitude:51.5,longitude:-0.1}]);assert.equal(input[0].private,'discard');assert.equal(weather.configuredCities(undefined)[0].id,'shanghai');
 });

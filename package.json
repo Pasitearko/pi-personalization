@@ -11,7 +11,7 @@
   "pi": {
     "extensions": [
       "extensions/conversation-timeline/index.ts",
-      "extensions/jinshanwei-weather/index.ts",
+      "extensions/weather-row/index.ts",
       "extensions/message-timestamps/index.ts",
       "extensions/openai-fast/index.ts",
       "extensions/subscription-usage-row/index.ts",
