@@ -21,13 +21,26 @@
 
 推荐从 **GitHub MCP** 开始：仓库检索、Issues、PR 和代码协作。上游：[github/github-mcp-server](https://github.com/github/github-mcp-server)。远程入口 `https://api.githubcopilot.com/mcp/`；每个人使用自己的 OAuth / PAT，权限遵循最小化原则。这个项目不提供任何账号凭据。
 
-需要统一的搜索、按需连接和工具发现，可选 [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter)：
+### Pi 1.1.0：优先使用原生 MCP
+
+Pi 已内置 MCP，不必为了连接服务器再装适配器。按官方指南在本机配置自己的 `GITHUB_TOKEN` 环境变量（建议使用只授权必要仓库和能力的 fine-grained PAT），再执行：
+
+```sh
+pi mcp add github --url https://api.githubcopilot.com/mcp/ --bearer-token-env-var GITHUB_TOKEN --exposure deferred
+pi mcp list
+```
+
+会话内用 `/mcp` 管理连接和工具，改配置后 `/reload`。令牌只保存在本机，不要写进本项目或公开 issue。若选择 OAuth，按服务器和当前 Pi 版本要求配置自己的客户端，不承诺所有服务器都支持免配置注册。
+
+### 可选：pi-mcp-adapter
+
+这是作者使用的另一套方案。需要它的统一搜索、按需连接和工具发现时，可选 [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter)：
 
 ```sh
 pi install npm:pi-mcp-adapter
 ```
 
-重启 Pi 后使用 `/mcp-adapter setup` 添加服务器，使用 `/mcp-auth github` 登录；也可让 Pi 调用 `mcp({ action: "install", url: "https://api.githubcopilot.com/mcp/" })`。Pi 自带 MCP 与适配器是否共用认证、工具名称等，以所安装版本的文档为准，避免重复注册同一服务器。
+重启 Pi 后使用 `/mcp-adapter setup` 添加服务器，使用 `/mcp-auth github` 登录；也可让 Pi 调用 `mcp({ action: "install", url: "https://api.githubcopilot.com/mcp/" })`。**适配器会替代会话内的原生 MCP**，两者不要重复配置同一个服务器；shell 里的 `pi mcp` 命令仍操作原生配置，不能拿它检查适配器的连接。认证格式与命令以安装版本的文档为准。
 
 浏览器任务通常先用 Playwright skill，不必为每一个任务都新增 MCP。所有 MCP 写操作（发布、合并、删除等）应要求确认，OAuth tokens、cookies 和 MCP caches 只留本机。
 
