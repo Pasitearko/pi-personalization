@@ -5,7 +5,15 @@ An installable Pi package distilled from a locally customized setup: weather, qu
 
 ## Previews
 
-These are privacy-safe demo renders, not screenshots of private sessions or accounts. Real Pi / ALPS frames and actual click/selection handlers are used with fictional dialogue, paths, timestamps and values; footer rows are illustrative. Terminal fonts and platform behavior may differ.
+### Actual terminal screenshot
+
+![Pi running in Windows Terminal on Windows 11 with PowerShell 7.6](docs/previews/windows-terminal-real.png)
+
+Windows 11, Windows Terminal, PowerShell 7.6. The author explicitly chose to publish this original image without cropping, masking or image edits. This is an actual terminal capture, not a fictional-data demo.
+
+### Controlled demo previews
+
+The following three images are privacy-safe demo renders, not screenshots of private sessions or accounts. Real Pi / ALPS frames and actual click/selection handlers are used with fictional dialogue, paths, timestamps and values; footer rows are illustrative. Terminal fonts and platform behavior may differ.
 
 ![Interface overview with fictional status values](docs/previews/overview.png)
 
