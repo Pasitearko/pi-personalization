@@ -1,6 +1,6 @@
 {
-  "name": "@pasitearko/pi-personalization",
-  "version": "0.1.0",
+  "name": "@jiuliyear/pi-personalization",
+  "version": "0.1.1",
   "description": "Portable Pi appearance extensions, a theme, and version-guarded ALPS customization patches",
   "license": "MIT",
   "type": "module",

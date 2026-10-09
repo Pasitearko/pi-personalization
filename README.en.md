@@ -1,5 +1,5 @@
 # Pi Personalization
-[中文完整说明](README.md) · [MIT](LICENSE) · [Recommendations](docs/RECOMMENDATIONS.md)
+[中文完整说明](README.md) · [MIT](LICENSE) · [npm](https://www.npmjs.com/package/@jiuliyear/pi-personalization) · [Pi catalog](https://pi.dev/packages/@jiuliyear/pi-personalization) · [Recommendations](docs/RECOMMENDATIONS.md)
 
 An installable Pi package distilled from a locally customized setup: weather, quota row, per-round timer, OpenAI Fast switch, message timestamps, prompt timeline, whole-frame collapse/expand, clean selection/copy, and a minimal theme.
 
@@ -26,8 +26,10 @@ The following three images are privacy-safe demo renders, not screenshots of pri
 ## Install
 
 ```sh
-pi install git:github.com/Pasitearko/pi-personalization
+pi install npm:@jiuliyear/pi-personalization
 ```
+
+Alternatively, install from GitHub: `pi install git:github.com/Pasitearko/pi-personalization`. **Choose one source; do not load both copies.** The npm package includes the `pi-package` discovery keyword and a preview image. [Pi catalog](https://pi.dev/packages) indexing may lag behind npm publication.
 
 Restart Pi or use /reload. Node 22.19.0+ (24 LTS recommended); Pi 1.1.0 recommended. The private frame/selection adapters also recognize tested 1.0.4. Unsupported layouts fail closed to native behavior. Fullscreen and terminal mouse/Unicode support are required for advanced interactions.
 

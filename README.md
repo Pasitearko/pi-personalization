@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/Pasitearko/pi-personalization/actions/workflows/ci.yml/badge.svg)](https://github.com/Pasitearko/pi-personalization/actions/workflows/ci.yml)
 
-[English](README.en.md) · [MIT](LICENSE) · [Skills / MCP 推荐](docs/RECOMMENDATIONS.md) · [安全说明](SECURITY.md)
+[English](README.en.md) · [MIT](LICENSE) · [npm](https://www.npmjs.com/package/@jiuliyear/pi-personalization) · [Pi 包目录](https://pi.dev/packages/@jiuliyear/pi-personalization) · [Skills / MCP 推荐](docs/RECOMMENDATIONS.md) · [安全说明](SECURITY.md)
 
 把一套真实使用过的 Pi 外观定制整理成**可安装的 Pi package**：天气、订阅额度共享行、Fast 开关、会话时间戳、提问时间轴、整框展开/收缩，以及「框线不参与选区高亮和复制」。附带主题、字体构建配方、透明的 ALPS 高级补丁和可撤销的配置工具。
 
@@ -39,15 +39,17 @@
 前提：Node.js 22.19.0+（建议 24 LTS），已安装 Pi。建议使用 **Pi 1.1.0**；私有布局适配也保留对 1.0.4 的已验证支持。高级鼠标功能需要 Pi fullscreen 和支持 SGR mouse 的终端。
 
 ```sh
-pi install git:github.com/Pasitearko/pi-personalization
+pi install npm:@jiuliyear/pi-personalization
 ```
+
+也可通过 GitHub 安装：`pi install git:github.com/Pasitearko/pi-personalization`。**两种来源择一安装，不要同时加载同一套扩展。** npm 包包含 `pi-package` 关键词和预览图，符合 [Pi 包目录](https://pi.dev/packages) 的发现条件；目录索引可能晚于 npm 发布更新。
 
 重启 Pi 或执行 `/reload`。在 Pi 设置中选择 `no-tool-bg` 主题；如果不用本项目的主题，仍可保留你自己的主题。
 
 也可以只对一个项目安装：
 
 ```sh
-pi install -l git:github.com/Pasitearko/pi-personalization
+pi install -l npm:@jiuliyear/pi-personalization
 ```
 
 **基础安装不会修改已安装 ALPS 的文件，不会自动装配套插件，不会默认开启 Fast，也不会导入别人的配置或认证。** 不使用 ALPS 时，依赖其边框/状态桥的部分会保持原生行为；独立功能仍可使用。
@@ -179,7 +181,7 @@ docs/         skills / MCP 推荐、三平台 CI 模板
 licenses/     第三方原始 MIT notices
 ```
 
-卸载基础包：`pi remove git:github.com/Pasitearko/pi-personalization`，再重启 Pi。若装了高级补丁，请先按上方 undo 撤回；配套插件和用户主动修改的设置不会被偷偷删除。请勿同时加载本项目与作者同名本地扩展副本，以免重复状态/重复 hook。
+卸载基础包：npm 来源用 `pi remove npm:@jiuliyear/pi-personalization`；GitHub 来源用 `pi remove git:github.com/Pasitearko/pi-personalization`，再重启 Pi。若装了高级补丁，请先按上方 undo 撤回；配套插件和用户主动修改的设置不会被偷偷删除。请勿同时加载本项目与作者同名本地扩展副本，以免重复状态/重复 hook。
 
 ## License
 
