@@ -4,11 +4,13 @@
   "description": "Portable Pi appearance extensions, a theme, and version-guarded ALPS customization patches",
   "license": "MIT",
   "type": "module",
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "repository": { "type": "git", "url": "https://github.com/Pasitearko/pi-personalization.git" },
   "engines": { "node": ">=22.19.0" },
   "keywords": ["pi-package", "pi", "tui", "terminal", "personalization"],
   "files": ["extensions/**/*.ts", "extensions/*/README.md", "extensions/working-timer/assets/completion.wav", "themes", "tools", "patches", "examples", "fonts/build-fonts.py", "fonts/requirements.txt", "fonts/README.md", "fonts/OFL.txt", "docs", "licenses", "README.md", "README.en.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "SECURITY.md"],
   "pi": {
+    "image": "https://raw.githubusercontent.com/Pasitearko/pi-personalization/main/docs/previews/windows-terminal-real.png",
     "extensions": [
       "extensions/conversation-timeline/index.ts",
       "extensions/weather-row/index.ts",
